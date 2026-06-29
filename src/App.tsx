@@ -24,7 +24,8 @@ import {
   RotateCcw,
   Volume2,
   Bell,
-  ExternalLink
+  ExternalLink,
+  Key
 } from 'lucide-react';
 import { AppState, SubjectType, SUBJECTS_CONFIG, WEEKLY_SCHEDULE, ProblemItem, AssignmentSection } from './types';
 import { INITIAL_APP_STATE, INITIAL_PASTE_TEXT } from './initialData';
@@ -141,6 +142,10 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [customApiKey, setCustomApiKey] = useState<string>(() => {
+    return localStorage.getItem('user_gemini_api_key') || '';
+  });
+  const [showApiKeySetting, setShowApiKeySetting] = useState(false);
   const [selectedSubject, setSelectedSubject] = useState<SubjectType>('geometry');
   const [filterType, setFilterType] = useState<'all' | 'todo' | 'completed'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -253,6 +258,11 @@ export default function App() {
     localStorage.setItem('fix_academy_planner_state', JSON.stringify(state));
   }, [state]);
 
+  // Save custom API key to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('user_gemini_api_key', customApiKey);
+  }, [customApiKey]);
+
   // Handle camera start/stop
   const startCamera = async () => {
     try {
@@ -357,58 +367,213 @@ export default function App() {
     stopCamera();
   };
 
-  // Handle parsing through the Gemini proxy server
+  // Direct client-side Gemini API call for static hosting environments like GitHub Pages
+  const runClientSideGemini = async (text: string, imageBase64: string | null, apiKey: string) => {
+    const systemInstruction = `
+You are an expert tutor coordinator for "Fix" (픽스 경시학원), a highly competitive math academy.
+Your task is to parse raw homework, WT range, or handwritten planner/notebook photos into structured JSON.
+
+There are 4 main subjects:
+1. 기하 (geometry)
+2. 대수 (algebra)
+3. 정수 (number_theory)
+4. 조합 (combinatorics)
+
+OCR Misread & Subject Matching Corrections:
+- IMPORTANT OCR FIX: Handwriting recognition often misreads "수열 이론" (Sequence Theory) or "수열이론" as "4열 어른", "4열어른", "수열어른", "4열", or "4열 어론". You MUST interpret any such text as "수열 이론" and always categorize it under "대수 (algebra)".
+- Always categorize general Sequence (수열), series, or functional equations under "대수 (algebra)".
+
+Each subject contains 3 potential sections of work (Exclude WT 오답 / wtErrors as requested by user):
+- previews (예습)
+- reviews (복습)
+- wtScopes (WT 범위 - Weekly Test study range)
+There is also a general "notes" field for any extra comments.
+
+Crucial instructions for problem/page ranges:
+- THEORY & CONCEPT SEPARATION RULES:
+  1. IF NOT separated by a comma (e.g., "이론 p.52-58", "이론 52-58p"):
+     - This means studying the theory page range.
+     - You MUST split this range into individual page items, carrying the prefix and page indicator over.
+     - For example: "이론 p.52-58" MUST be split into: "이론 p.52", "이론 p.53", "이론 p.54", "이론 p.55", "이론 p.56", "이론 p.57", "이론 p.58".
+     - "개념 12-15p" MUST be split into: "개념 12p", "개념 13p", "개념 14p", "개념 15p".
+  2. IF separated by a comma or explicit separator (e.g., "이론, 52-58" or "이론 및 52-58"):
+     - This means TWO separate homework sections:
+       a. A single item for reading/studying the theory, labeled simply "이론" (or "개념" etc.).
+       b. A range of homework problems from #52 to #58, which must be split into separate problem items: "#52", "#53", "#54", "#55", "#56", "#57", "#58" (or "52번", "53번" etc.).
+     - DO NOT merge the word "이론" into each problem number (e.g., DO NOT generate "이론 52", "이론 53" etc.). Keep "이론" as its own separate item, and list problem numbers separately.
+- IMPORTANT RULE: For actual problem lists/practice exercise ranges, if a homework description does NOT contain the letter 'p' or 'p.' or the word '페이지' anywhere in that range/item context, you must treat every item as a problem number (e.g., '#52' or '52번', or just '52'), NOT as a page (페이지). Only append 'p' to the label (e.g., '52p') if 'p' or 'p.' or '페이지' was explicitly written in the raw text.
+  For example:
+  - "52-57" (no 'p') -> should generate problem numbers: "#52", "#53", "#54", "#55", "#56", "#57" (or "52번", "53번" etc). Do NOT generate "52p", "53p", etc.
+  - "52-57p" (contains 'p') -> should generate pages: "52p", "53p", "54p", "55p", "56p", "57p".
+- For actual homework problem ranges, you MUST split a range (e.g., "14-18", "1~18", "43-47") into individual, distinct items in the 'problems' list.
+  For example:
+  - "유제 16-19" should generate: "유제 16", "유제 17", "유제 18", "유제 19"
+  - "연습 14-18" should generate: "연습 14", "연습 15", "연습 16", "연습 17", "연습 18"
+  - "이론, 52-58" should generate: "이론" as one item, followed by "#52", "#53", "#54", "#55", "#56", "#57", "#58" (or "52번"...) as separate problem items.
+  - "이론 p.52-58" should generate: "이론 p.52", "이론 p.53", "이론 p.54", "이론 p.55", "이론 p.56", "이론 p.57", "이론 p.58".
+  - "이론 p.45" should generate: "이론 p.45" as a single item.
+  - "#65-78" list of question numbers should generate: "#65", "#66", ..., "#78"
+  - "WT 범위: 대수 : 1단원 연습문제 1번~18번" should generate individual items: "연습 1", "연습 2", ..., "연습 18"
+  - "1단원 연습문제 18~26" should generate: "연습 18", "연습 19", ..., "연습 26"
+  - "2단원 개념 및 예제1,2,3" should generate: "2단원 개념", "예제 1", "예제 2", "예제 3"
+
+Check if any item is already completed based on sections like "WT 공부 중" or "done" status in the text or written on the paper.
+For example:
+"WT 공부 중
+기하: done
+대수: 1단원 연습 9,16,17"
+- Under 'geometry', all parsed problems should have isCompleted: true.
+- Under 'algebra', ONLY the problems corresponding to "연습 9", "연습 16", "연습 17" under 'algebra' WT scope should be marked isCompleted: true, and isCompleted: false for other algebra problems.
+
+Respond ONLY with valid JSON conforming to the requested schema. Ensure to parse thoroughly.
+`;
+
+    const textPrompt = text 
+      ? `Please extract and parse the homework from this text into structured JSON as defined by the system instructions: \n\n${text}`
+      : `Please analyze the handwritten notebook/planner in this image, identify all assignments for Peaks academy (Geometry, Algebra, Combinatorics, Number Theory) including Previews (예습), Reviews (복습), and WT Scope (WT 범위), expand any page/problem ranges, and parse it into structured JSON.`;
+
+    const parts: any[] = [];
+
+    if (imageBase64) {
+      const matches = imageBase64.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
+      if (matches && matches.length === 3) {
+        parts.push({
+          inlineData: {
+            mimeType: matches[1],
+            data: matches[2]
+          }
+        });
+      } else {
+        parts.push({
+          inlineData: {
+            mimeType: 'image/jpeg',
+            data: imageBase64
+          }
+        });
+      }
+    }
+
+    parts.push({ text: textPrompt });
+
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: parts
+          }
+        ],
+        systemInstruction: {
+          parts: [{ text: systemInstruction }]
+        },
+        generationConfig: {
+          responseMimeType: 'application/json'
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      let parsedErr;
+      try {
+        parsedErr = JSON.parse(errText);
+      } catch (_) {}
+      const msg = parsedErr?.error?.message || `Gemini API 오류: ${response.status}`;
+      throw new Error(msg);
+    }
+
+    const resJson = await response.json();
+    const rawTextResponse = resJson.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!rawTextResponse) {
+      throw new Error('Gemini API가 빈 응답을 반환했습니다.');
+    }
+
+    try {
+      return JSON.parse(rawTextResponse);
+    } catch (e) {
+      const sanitized = rawTextResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+      return JSON.parse(sanitized);
+    }
+  };
+
+  // Handle parsing through the Gemini proxy server or client-side direct API
   const handleParse = async () => {
     setIsLoading(true);
     setErrorMsg(null);
     setSuccessMsg(null);
 
     try {
-      const response = await fetch('/api/parse-homework', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ 
-          text: uploadTab === 'text' ? pasteText : '', 
-          image: uploadTab !== 'text' ? imagePreviewUrl : null 
-        }),
-      });
-
-      if (!response.ok) {
-        let errMsg = '분석에 실패했습니다. 사진 선명도나 서버 상태를 확인하세요.';
-        const contentType = response.headers.get('content-type');
-        if (contentType && contentType.includes('application/json')) {
-          try {
-            const errData = await response.json();
-            errMsg = errData.error || errMsg;
-          } catch (e) {
-            // Ignore parse error and keep default msg
-          }
-        } else {
-          try {
-            const textErr = await response.text();
-            console.error('Server HTML/Text error:', textErr);
-            if (textErr.includes('GEMINI_API_KEY environment variable is required')) {
-              errMsg = 'GEMINI_API_KEY 환경 변수가 설정되지 않았습니다. Settings > Secrets에서 API 키를 등록해주세요.';
-            } else {
-              errMsg = `서버 오류가 발생했습니다. (HTTP 상태 코드: ${response.status})`;
-            }
-          } catch (e) {
-            errMsg = `서버 응답 오류 (HTTP ${response.status})`;
-          }
-        }
-        throw new Error(errMsg);
-      }
-
       let parsedData;
-      const responseContentType = response.headers.get('content-type');
-      if (responseContentType && responseContentType.includes('application/json')) {
-        parsedData = await response.json();
+
+      if (customApiKey.trim()) {
+        // Direct client-side Gemini API call
+        parsedData = await runClientSideGemini(
+          uploadTab === 'text' ? pasteText : '', 
+          uploadTab !== 'text' ? imagePreviewUrl : null,
+          customApiKey.trim()
+        );
       } else {
-        const rawText = await response.text();
-        console.error('Server returned non-JSON successful response:', rawText);
-        throw new Error('서버에서 올바른 형식의 응답(JSON)을 받지 못했습니다.');
+        // Fallback to our custom proxy server
+        let response;
+        try {
+          response = await fetch('/api/parse-homework', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ 
+              text: uploadTab === 'text' ? pasteText : '', 
+              image: uploadTab !== 'text' ? imagePreviewUrl : null 
+            }),
+          });
+        } catch (netErr) {
+          console.error("Network error during API fetch:", netErr);
+          throw new Error('서버 연결에 실패했습니다. GitHub Pages와 같은 정적 호스팅 환경에서는 백엔드 API 서버를 사용할 수 없습니다. 하단의 "API 키 설정"에 직접 발급받은 Gemini API Key를 입력해주시면 브라우저에서 즉시 정상 동작합니다!');
+        }
+
+        if (!response.ok) {
+          let errMsg = '분석에 실패했습니다. 사진 선명도나 서버 상태를 확인하세요.';
+          
+          if (response.status === 405 || response.status === 404) {
+            errMsg = `서버 오류 (HTTP ${response.status}): GitHub Pages 같은 정적 웹사이트 호스팅 환경에서는 백엔드 API(/api/parse-homework)를 이용할 수 없습니다. 하단의 "API 키 설정" 메뉴에서 본인의 Gemini API Key를 입력해 직접 연동하시면 이 웹사이트 환경에서도 즉시 100% 정상 작동합니다!`;
+            throw new Error(errMsg);
+          }
+
+          const contentType = response.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            try {
+              const errData = await response.json();
+              errMsg = errData.error || errMsg;
+            } catch (e) {
+              // Ignore parse error and keep default msg
+            }
+          } else {
+            try {
+              const textErr = await response.text();
+              console.error('Server HTML/Text error:', textErr);
+              if (textErr.includes('GEMINI_API_KEY environment variable is required')) {
+                errMsg = 'GEMINI_API_KEY 환경 변수가 설정되지 않았습니다. Settings > Secrets에서 API 키를 등록해주세요.';
+              } else {
+                errMsg = `서버 오류가 발생했습니다. (HTTP 상태 코드: ${response.status})`;
+              }
+            } catch (e) {
+              errMsg = `서버 응답 오류 (HTTP ${response.status})`;
+            }
+          }
+          throw new Error(errMsg);
+        }
+
+        const responseContentType = response.headers.get('content-type');
+        if (responseContentType && responseContentType.includes('application/json')) {
+          parsedData = await response.json();
+        } else {
+          const rawText = await response.text();
+          console.error('Server returned non-JSON successful response:', rawText);
+          throw new Error('서버에서 올바른 형식의 응답(JSON)을 받지 못했습니다.');
+        }
       }
       
       // Merge with ids and convert into full state
@@ -1104,6 +1269,60 @@ export default function App() {
                   </>
                 )}
               </button>
+
+              {/* Client-side Gemini API key input for static/GitHub Pages */}
+              <div className="pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowApiKeySetting(!showApiKeySetting)}
+                  className="w-full flex items-center justify-between text-xs text-slate-500 hover:text-indigo-600 transition-colors py-1 cursor-pointer"
+                >
+                  <span className="flex items-center gap-1.5 font-medium">
+                    <Key size={12} className="text-slate-400" />
+                    GitHub Pages용 개인 API 키 설정 {customApiKey ? '🟢' : '⚪'}
+                  </span>
+                  <span>{showApiKeySetting ? '닫기 ▲' : '설정 ▼'}</span>
+                </button>
+                {showApiKeySetting && (
+                  <div className="mt-2 bg-slate-50 p-3 rounded-xl border border-slate-100 text-xs space-y-2">
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      GitHub Pages와 같은 정적 사이트에서는 보안 백엔드 서버가 구동되지 않습니다. 본인의 개인 <span className="font-semibold text-indigo-600">Gemini API 키</span>를 입력하면, 브라우저상에서 안전하게 AI 분석 기능을 직접 무료로 사용하실 수 있습니다. (키는 브라우저 내에만 로컬로 저장되며 안전합니다)
+                    </p>
+                    <div className="flex gap-1.5">
+                      <input
+                        type="password"
+                        placeholder="AI Studio에서 발급받은 GEMINI_API_KEY"
+                        value={customApiKey}
+                        onChange={(e) => setCustomApiKey(e.target.value)}
+                        className="flex-1 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 placeholder-slate-400 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
+                      />
+                      {customApiKey && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCustomApiKey('');
+                            setSuccessMsg('API 키가 성공적으로 지워졌습니다.');
+                          }}
+                          className="px-2 py-1.5 text-[11px] bg-slate-200 text-slate-600 rounded-lg font-medium hover:bg-slate-300 transition-colors cursor-pointer"
+                        >
+                          초기화
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] text-slate-400">
+                      <a 
+                        href="https://aistudio.google.com/apikey" 
+                        target="_blank" 
+                        referrerPolicy="no-referrer"
+                        className="text-indigo-500 hover:underline flex items-center gap-0.5"
+                      >
+                        무료 API 키 발급받기 <ExternalLink size={10} />
+                      </a>
+                      {customApiKey && <span className="text-emerald-600 font-semibold">적용 중</span>}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Dumbo Character Praise Section */}
