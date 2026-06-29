@@ -1,0 +1,6 @@
+{
+  "name": "픽스 학원 숙제 플래너",
+  "description": "픽스(Fix) 경시학원의 4과목(기하, 대수, 정수, 조합) 예습, 복습, WT 범위를 손글씨 사진 촬영 또는 알림장 텍스트 입력으로 자동 인식하여 개별 문항 체크리스트를 만들어주는 플래너",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
