@@ -23,7 +23,8 @@ import {
   Upload,
   RotateCcw,
   Volume2,
-  Bell
+  Bell,
+  ExternalLink
 } from 'lucide-react';
 import { AppState, SubjectType, SUBJECTS_CONFIG, WEEKLY_SCHEDULE, ProblemItem, AssignmentSection } from './types';
 import { INITIAL_APP_STATE, INITIAL_PASTE_TEXT } from './initialData';
@@ -695,14 +696,27 @@ export default function App() {
             </div>
           </div>
 
-          {/* Dynamic Running Clock instead of Gauge Dashboard */}
-          <div className="flex items-center gap-3 bg-white/90 backdrop-blur-xs px-4 py-2.5 rounded-xl border border-slate-200 shadow-xs">
-            <Clock className="text-indigo-600 animate-pulse shrink-0" size={16} />
-            <div className="text-right">
-              <p className="text-[10px] font-bold text-slate-400 tracking-wider">현재 시간</p>
-              <p className="text-xs font-extrabold text-slate-800 font-mono">
-                {currentTime.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' })} {currentTime.toLocaleTimeString('ko-KR', { hour12: false })}
-              </p>
+          <div className="flex flex-wrap items-center gap-3">
+            {/* PEAKS Band Shortcut */}
+            <a 
+              href="https://www.band.us/band/102658583/post"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl border border-emerald-700 shadow-xs text-xs font-black transition-all hover:scale-[1.02] active:scale-[0.98]"
+            >
+              <ExternalLink size={14} />
+              <span>픽스 밴드 바로가기</span>
+            </a>
+
+            {/* Dynamic Running Clock instead of Gauge Dashboard */}
+            <div className="flex items-center gap-3 bg-white/90 backdrop-blur-xs px-4 py-2.5 rounded-xl border border-slate-200 shadow-xs">
+              <Clock className="text-indigo-600 animate-pulse shrink-0" size={16} />
+              <div className="text-right">
+                <p className="text-[10px] font-bold text-slate-400 tracking-wider">현재 시간</p>
+                <p className="text-xs font-extrabold text-slate-800 font-mono">
+                  {currentTime.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' })} {currentTime.toLocaleTimeString('ko-KR', { hour12: false })}
+                </p>
+              </div>
             </div>
           </div>
         </div>
