@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { AppState, SubjectType, SUBJECTS_CONFIG, WEEKLY_SCHEDULE, ProblemItem, AssignmentSection } from './types';
 import { INITIAL_APP_STATE, INITIAL_PASTE_TEXT } from './initialData';
+import CelebrationOverlay from './components/CelebrationOverlay';
 
 interface PraiseCharacter {
   name: string;
@@ -129,6 +130,66 @@ export default function App() {
       return { ...prev, [subId]: nextIdx };
     });
   };
+
+  // Celebration effect states
+  const [showCelebration, setShowCelebration] = useState(false);
+  const [prevCompletedSubject, setPrevCompletedSubject] = useState<Record<SubjectType, boolean>>({
+    geometry: false,
+    algebra: false,
+    number_theory: false,
+    combinatorics: false,
+  });
+  const celebrationIsMounted = useRef(false);
+
+  useEffect(() => {
+    if (!celebrationIsMounted.current) {
+      celebrationIsMounted.current = true;
+      const initialMap: Record<SubjectType, boolean> = {
+        geometry: false,
+        algebra: false,
+        number_theory: false,
+        combinatorics: false,
+      };
+      (Object.keys(SUBJECTS_CONFIG) as SubjectType[]).forEach((subId) => {
+        const subState = state.subjects[subId];
+        const allProblems = [
+          ...subState.previews.flatMap(p => p.problems),
+          ...subState.reviews.flatMap(r => r.problems)
+        ];
+        initialMap[subId] = allProblems.length > 0 && allProblems.every(p => p.isCompleted);
+      });
+      setPrevCompletedSubject(initialMap);
+      return;
+    }
+
+    const nextCompletedMap = { ...prevCompletedSubject };
+    let triggered = false;
+
+    (Object.keys(SUBJECTS_CONFIG) as SubjectType[]).forEach((subId) => {
+      const subState = state.subjects[subId];
+      const allProblems = [
+        ...subState.previews.flatMap(p => p.problems),
+        ...subState.reviews.flatMap(r => r.problems)
+      ];
+      const hasProblems = allProblems.length > 0;
+      const isAllDone = hasProblems && allProblems.every(p => p.isCompleted);
+      
+      if (isAllDone && !prevCompletedSubject[subId]) {
+        triggered = true;
+      }
+      nextCompletedMap[subId] = isAllDone;
+    });
+
+    setPrevCompletedSubject(nextCompletedMap);
+
+    if (triggered) {
+      setShowCelebration(true);
+      const timer = setTimeout(() => {
+        setShowCelebration(false);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [state.subjects]);
 
   // Camera & Image OCR States
   const [isCameraActive, setIsCameraActive] = useState(false);
@@ -615,6 +676,9 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900 selection:bg-indigo-500 selection:text-white">
+      {/* Celebration overlay */}
+      <CelebrationOverlay isVisible={showCelebration} onClose={() => setShowCelebration(false)} />
+
       {/* Top Header */}
       <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200 shadow-xs px-4 py-3">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
