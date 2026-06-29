@@ -33,6 +33,16 @@ function getAiClient(): GoogleGenAI {
   return aiClient;
 }
 
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', time: new Date().toISOString() });
+});
+
+// GET fallback to prevent 405/404 confusion
+app.get('/api/parse-homework', (req, res) => {
+  res.status(405).json({ error: 'POST method is required for parsing homework.' });
+});
+
 // REST API for parsing the custom text format or handwritten photo using Gemini
 app.post('/api/parse-homework', async (req, res) => {
   try {
