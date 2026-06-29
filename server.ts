@@ -87,7 +87,7 @@ app.post('/api/parse-homework', async (req, res) => {
       Respond ONLY with valid JSON conforming to the requested schema. Ensure to parse thoroughly.
     `;
 
-    let contents: any[] = [];
+    const parts: any[] = [];
 
     if (image) {
       // image is expected to be a data URI: "data:image/png;base64,iVBOR..."
@@ -95,7 +95,7 @@ app.post('/api/parse-homework', async (req, res) => {
       if (matches && matches.length === 3) {
         const mimeType = matches[1];
         const base64Data = matches[2];
-        contents.push({
+        parts.push({
           inlineData: {
             data: base64Data,
             mimeType: mimeType
@@ -103,7 +103,7 @@ app.post('/api/parse-homework', async (req, res) => {
         });
       } else {
         // Fallback if raw base64 is sent
-        contents.push({
+        parts.push({
           inlineData: {
             data: image,
             mimeType: 'image/jpeg'
@@ -116,11 +116,11 @@ app.post('/api/parse-homework', async (req, res) => {
       ? `Please extract and parse the homework from this text into structured JSON as defined by the system instructions: \n\n${text}`
       : `Please analyze the handwritten notebook/planner in this image, identify all assignments for Peaks academy (Geometry, Algebra, Combinatorics, Number Theory) including Previews (예습), Reviews (복습), and WT Scope (WT 범위), expand any page/problem ranges, and parse it into structured JSON.`;
 
-    contents.push(textPrompt);
+    parts.push({ text: textPrompt });
 
     const response = await ai.models.generateContent({
       model: 'gemini-3.5-flash',
-      contents: contents,
+      contents: { parts },
       config: {
         systemInstruction,
         responseMimeType: 'application/json',

@@ -314,11 +314,40 @@ export default function App() {
       });
 
       if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || '분석에 실패했습니다. 사진 선명도나 서버 상태를 확인하세요.');
+        let errMsg = '분석에 실패했습니다. 사진 선명도나 서버 상태를 확인하세요.';
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          try {
+            const errData = await response.json();
+            errMsg = errData.error || errMsg;
+          } catch (e) {
+            // Ignore parse error and keep default msg
+          }
+        } else {
+          try {
+            const textErr = await response.text();
+            console.error('Server HTML/Text error:', textErr);
+            if (textErr.includes('GEMINI_API_KEY environment variable is required')) {
+              errMsg = 'GEMINI_API_KEY 환경 변수가 설정되지 않았습니다. Settings > Secrets에서 API 키를 등록해주세요.';
+            } else {
+              errMsg = `서버 오류가 발생했습니다. (HTTP 상태 코드: ${response.status})`;
+            }
+          } catch (e) {
+            errMsg = `서버 응답 오류 (HTTP ${response.status})`;
+          }
+        }
+        throw new Error(errMsg);
       }
 
-      const parsedData = await response.json();
+      let parsedData;
+      const responseContentType = response.headers.get('content-type');
+      if (responseContentType && responseContentType.includes('application/json')) {
+        parsedData = await response.json();
+      } else {
+        const rawText = await response.text();
+        console.error('Server returned non-JSON successful response:', rawText);
+        throw new Error('서버에서 올바른 형식의 응답(JSON)을 받지 못했습니다.');
+      }
       
       // Merge with ids and convert into full state
       const newSubjectsState = { ...state.subjects };
