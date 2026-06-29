@@ -82,6 +82,45 @@ const PRAISE_CHARACTERS: PraiseCharacter[] = [
   },
 ];
 
+// Utility to compress and resize images on the client-side
+const compressImage = (dataUrl: string, maxDim: number = 1600, quality: number = 0.85): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      let width = img.width;
+      let height = img.height;
+      
+      // Resize if necessary
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+      }
+      
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve(dataUrl); // Fallback to original if canvas context fails
+        return;
+      }
+      
+      ctx.drawImage(img, 0, 0, width, height);
+      const compressedDataUrl = canvas.toDataURL('image/jpeg', quality);
+      resolve(compressedDataUrl);
+    };
+    img.onerror = (err) => {
+      reject(err);
+    };
+    img.src = dataUrl;
+  });
+};
+
 export default function App() {
   const [state, setState] = useState<AppState>(() => {
     const saved = localStorage.getItem('fix_academy_planner_state') || localStorage.getItem('peaks_academy_planner_state');
@@ -248,9 +287,18 @@ export default function App() {
       if (ctx) {
         ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/jpeg');
-        setImagePreviewUrl(dataUrl);
+        
+        // Compress photo to avoid payload size issues and speed up uploads
+        compressImage(dataUrl, 1600, 0.85).then((compressed) => {
+          setImagePreviewUrl(compressed);
+          setSuccessMsg('플래너 사진이 성공적으로 촬영 및 최적화되었습니다! 이제 아래 분석 버튼을 클릭하세요.');
+        }).catch((err) => {
+          console.error('Compression failed:', err);
+          setImagePreviewUrl(dataUrl);
+          setSuccessMsg('플래너 사진이 성공적으로 촬영되었습니다! 이제 아래 분석 버튼을 클릭하세요.');
+        });
+        
         stopCamera();
-        setSuccessMsg('플래너 사진이 성공적으로 촬영되었습니다! 이제 아래 분석 버튼을 클릭하세요.');
       }
     }
   };
@@ -262,8 +310,15 @@ export default function App() {
       setSelectedFile(file);
       const reader = new FileReader();
       reader.onloadend = () => {
-        setImagePreviewUrl(reader.result as string);
-        setSuccessMsg('사진 파일이 등록되었습니다. 아래 분석 버튼을 클릭해 주세요.');
+        const rawDataUrl = reader.result as string;
+        compressImage(rawDataUrl, 1600, 0.85).then((compressed) => {
+          setImagePreviewUrl(compressed);
+          setSuccessMsg('사진 파일이 등록 및 모바일 업로드 최적화되었습니다! 아래 분석 버튼을 클릭해 주세요.');
+        }).catch((err) => {
+          console.error('Compression failed:', err);
+          setImagePreviewUrl(rawDataUrl);
+          setSuccessMsg('사진 파일이 등록되었습니다. 아래 분석 버튼을 클릭해 주세요.');
+        });
       };
       reader.readAsDataURL(file);
     }
@@ -281,8 +336,15 @@ export default function App() {
       setSelectedFile(file);
       const reader = new FileReader();
       reader.onloadend = () => {
-        setImagePreviewUrl(reader.result as string);
-        setSuccessMsg('사진이 드롭되었습니다! 아래 분석 버튼을 클릭해 주세요.');
+        const rawDataUrl = reader.result as string;
+        compressImage(rawDataUrl, 1600, 0.85).then((compressed) => {
+          setImagePreviewUrl(compressed);
+          setSuccessMsg('사진이 드롭 및 모바일 업로드 최적화되었습니다! 아래 분석 버튼을 클릭해 주세요.');
+        }).catch((err) => {
+          console.error('Compression failed:', err);
+          setImagePreviewUrl(rawDataUrl);
+          setSuccessMsg('사진이 드롭되었습니다! 아래 분석 버튼을 클릭해 주세요.');
+        });
       };
       reader.readAsDataURL(file);
     }
@@ -726,16 +788,22 @@ export default function App() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {/* PEAKS Band Shortcut */}
-            <a 
-              href="https://www.band.us/band/102658583/post"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl border border-emerald-700 shadow-xs text-xs font-black transition-all hover:scale-[1.02] active:scale-[0.98]"
-            >
-              <ExternalLink size={14} />
-              <span>픽스 밴드 바로가기</span>
-            </a>
+            {/* PEAKS Band Shortcut with custom subtext explaining login requirement */}
+            <div className="flex flex-col items-end">
+              <a 
+                href="https://www.band.us/band/102658583/post"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl border border-emerald-700 shadow-xs text-xs font-black transition-all hover:scale-[1.02] active:scale-[0.98]"
+                title="네이버 밴드 로그인 및 가입이 필요합니다."
+              >
+                <ExternalLink size={14} />
+                <span>픽스 밴드 바로가기</span>
+              </a>
+              <span className="text-[9px] font-bold text-emerald-600 tracking-tight mt-1 mr-1 animate-pulse">
+                * 밴드 로그인/가입 필요
+              </span>
+            </div>
 
             {/* Dynamic Running Clock instead of Gauge Dashboard */}
             <div className="flex items-center gap-3 bg-white/90 backdrop-blur-xs px-4 py-2.5 rounded-xl border border-slate-200 shadow-xs">

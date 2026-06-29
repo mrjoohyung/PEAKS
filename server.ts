@@ -55,6 +55,10 @@ app.post('/api/parse-homework', async (req, res) => {
       3. 정수 (number_theory)
       4. 조합 (combinatorics)
 
+      OCR Misread & Subject Matching Corrections:
+      - IMPORTANT OCR FIX: Handwriting recognition often misreads "수열 이론" (Sequence Theory) or "수열이론" as "4열 어른", "4열어른", "수열어른", "4열", or "4열 어론". You MUST interpret any such text as "수열 이론" and always categorize it under "대수 (algebra)".
+      - Always categorize general Sequence (수열), series, or functional equations under "대수 (algebra)".
+
       Each subject contains 3 potential sections of work (Exclude WT 오답 / wtErrors as requested by user):
       - previews (예습)
       - reviews (복습)
@@ -62,15 +66,28 @@ app.post('/api/parse-homework', async (req, res) => {
       There is also a general "notes" field for any extra comments.
 
       Crucial instructions for problem/page ranges:
-      - IMPORTANT RULE: If a homework description does NOT contain the letter 'p' or 'p.' or the word '페이지' anywhere in that range/item context, you must treat every item as a problem number (e.g., '#52' or '52번', or just '52'), NOT as a page (페이지). Only append 'p' to the label (e.g., '52p') if 'p' or 'p.' or '페이지' was explicitly written in the raw text.
+      - THEORY & CONCEPT SEPARATION RULES:
+        1. IF NOT separated by a comma (e.g., "이론 p.52-58", "이론 52-58p"):
+           - This means studying the theory page range.
+           - You MUST split this range into individual page items, carrying the prefix and page indicator over.
+           - For example: "이론 p.52-58" MUST be split into: "이론 p.52", "이론 p.53", "이론 p.54", "이론 p.55", "이론 p.56", "이론 p.57", "이론 p.58".
+           - "개념 12-15p" MUST be split into: "개념 12p", "개념 13p", "개념 14p", "개념 15p".
+        2. IF separated by a comma or explicit separator (e.g., "이론, 52-58" or "이론 및 52-58"):
+           - This means TWO separate homework sections:
+             a. A single item for reading/studying the theory, labeled simply "이론" (or "개념" etc.).
+             b. A range of homework problems from #52 to #58, which must be split into separate problem items: "#52", "#53", "#54", "#55", "#56", "#57", "#58" (or "52번", "53번" etc.).
+           - DO NOT merge the word "이론" into each problem number (e.g., DO NOT generate "이론 52", "이론 53" etc.). Keep "이론" as its own separate item, and list problem numbers separately.
+      - IMPORTANT RULE: For actual problem lists/practice exercise ranges, if a homework description does NOT contain the letter 'p' or 'p.' or the word '페이지' anywhere in that range/item context, you must treat every item as a problem number (e.g., '#52' or '52번', or just '52'), NOT as a page (페이지). Only append 'p' to the label (e.g., '52p') if 'p' or 'p.' or '페이지' was explicitly written in the raw text.
         For example:
         - "52-57" (no 'p') -> should generate problem numbers: "#52", "#53", "#54", "#55", "#56", "#57" (or "52번", "53번" etc). Do NOT generate "52p", "53p", etc.
         - "52-57p" (contains 'p') -> should generate pages: "52p", "53p", "54p", "55p", "56p", "57p".
-      - You MUST split a range (e.g., "14-18", "1~18", "43-47") into individual, distinct items in the 'problems' list.
+      - For actual homework problem ranges, you MUST split a range (e.g., "14-18", "1~18", "43-47") into individual, distinct items in the 'problems' list.
         For example:
         - "유제 16-19" should generate: "유제 16", "유제 17", "유제 18", "유제 19"
         - "연습 14-18" should generate: "연습 14", "연습 15", "연습 16", "연습 17", "연습 18"
-        - "52-57" without 'p' should generate: "#52", "#53", "#54", "#55", "#56", "#57" or "52번", "53번", ...
+        - "이론, 52-58" should generate: "이론" as one item, followed by "#52", "#53", "#54", "#55", "#56", "#57", "#58" (or "52번"...) as separate problem items.
+        - "이론 p.52-58" should generate: "이론 p.52", "이론 p.53", "이론 p.54", "이론 p.55", "이론 p.56", "이론 p.57", "이론 p.58".
+        - "이론 p.45" should generate: "이론 p.45" as a single item.
         - "#65-78" list of question numbers should generate: "#65", "#66", ..., "#78"
         - "WT 범위: 대수 : 1단원 연습문제 1번~18번" should generate individual items: "연습 1", "연습 2", ..., "연습 18"
         - "1단원 연습문제 18~26" should generate: "연습 18", "연습 19", ..., "연습 26"
@@ -118,301 +135,354 @@ app.post('/api/parse-homework', async (req, res) => {
 
     parts.push({ text: textPrompt });
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.5-flash',
-      contents: { parts },
-      config: {
-        systemInstruction,
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            geometry: {
-              type: Type.OBJECT,
-              properties: {
-                previews: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      title: { type: Type.STRING, description: "Title like '예습: 52-57'" },
-                      problems: {
-                        type: Type.ARRAY,
-                        items: {
-                          type: Type.OBJECT,
-                          properties: {
-                            label: { type: Type.STRING },
-                            isCompleted: { type: Type.BOOLEAN }
-                          },
-                          required: ['label', 'isCompleted']
-                        }
+    const config = {
+      systemInstruction,
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          geometry: {
+            type: Type.OBJECT,
+            properties: {
+              previews: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING, description: "Title like '예습: 52-57'" },
+                    problems: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          label: { type: Type.STRING },
+                          isCompleted: { type: Type.BOOLEAN }
+                        },
+                        required: ['label', 'isCompleted']
                       }
-                    },
-                    required: ['title', 'problems']
-                  }
-                },
-                reviews: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      title: { type: Type.STRING },
-                      problems: {
-                        type: Type.ARRAY,
-                        items: {
-                          type: Type.OBJECT,
-                          properties: {
-                            label: { type: Type.STRING },
-                            isCompleted: { type: Type.BOOLEAN }
-                          },
-                          required: ['label', 'isCompleted']
-                        }
+                    }
+                  },
+                  required: ['title', 'problems']
+                }
+              },
+              reviews: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    problems: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          label: { type: Type.STRING },
+                          isCompleted: { type: Type.BOOLEAN }
+                        },
+                        required: ['label', 'isCompleted']
                       }
-                    },
-                    required: ['title', 'problems']
-                  }
-                },
-                wtScopes: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      title: { type: Type.STRING },
-                      problems: {
-                        type: Type.ARRAY,
-                        items: {
-                          type: Type.OBJECT,
-                          properties: {
-                            label: { type: Type.STRING },
-                            isCompleted: { type: Type.BOOLEAN }
-                          },
-                          required: ['label', 'isCompleted']
-                        }
+                    }
+                  },
+                  required: ['title', 'problems']
+                }
+              },
+              wtScopes: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    problems: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          label: { type: Type.STRING },
+                          isCompleted: { type: Type.BOOLEAN }
+                        },
+                        required: ['label', 'isCompleted']
                       }
-                    },
-                    required: ['title', 'problems']
-                  }
-                },
-                notes: { type: Type.STRING }
-              }
-            },
-            algebra: {
-              type: Type.OBJECT,
-              properties: {
-                previews: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      title: { type: Type.STRING },
-                      problems: {
-                        type: Type.ARRAY,
-                        items: {
-                          type: Type.OBJECT,
-                          properties: {
-                            label: { type: Type.STRING },
-                            isCompleted: { type: Type.BOOLEAN }
-                          },
-                          required: ['label', 'isCompleted']
-                        }
+                    }
+                  },
+                  required: ['title', 'problems']
+                }
+              },
+              notes: { type: Type.STRING }
+            }
+          },
+          algebra: {
+            type: Type.OBJECT,
+            properties: {
+              previews: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    problems: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          label: { type: Type.STRING },
+                          isCompleted: { type: Type.BOOLEAN }
+                        },
+                        required: ['label', 'isCompleted']
                       }
-                    },
-                    required: ['title', 'problems']
-                  }
-                },
-                reviews: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      title: { type: Type.STRING },
-                      problems: {
-                        type: Type.ARRAY,
-                        items: {
-                          type: Type.OBJECT,
-                          properties: {
-                            label: { type: Type.STRING },
-                            isCompleted: { type: Type.BOOLEAN }
-                          },
-                          required: ['label', 'isCompleted']
-                        }
+                    }
+                  },
+                  required: ['title', 'problems']
+                }
+              },
+              reviews: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    problems: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          label: { type: Type.STRING },
+                          isCompleted: { type: Type.BOOLEAN }
+                        },
+                        required: ['label', 'isCompleted']
                       }
-                    },
-                    required: ['title', 'problems']
-                  }
-                },
-                wtScopes: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      title: { type: Type.STRING },
-                      problems: {
-                        type: Type.ARRAY,
-                        items: {
-                          type: Type.OBJECT,
-                          properties: {
-                            label: { type: Type.STRING },
-                            isCompleted: { type: Type.BOOLEAN }
-                          },
-                          required: ['label', 'isCompleted']
-                        }
+                    }
+                  },
+                  required: ['title', 'problems']
+                }
+              },
+              wtScopes: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    problems: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          label: { type: Type.STRING },
+                          isCompleted: { type: Type.BOOLEAN }
+                        },
+                        required: ['label', 'isCompleted']
                       }
-                    },
-                    required: ['title', 'problems']
-                  }
-                },
-                notes: { type: Type.STRING }
-              }
-            },
-            combinatorics: {
-              type: Type.OBJECT,
-              properties: {
-                previews: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      title: { type: Type.STRING },
-                      problems: {
-                        type: Type.ARRAY,
-                        items: {
-                          type: Type.OBJECT,
-                          properties: {
-                            label: { type: Type.STRING },
-                            isCompleted: { type: Type.BOOLEAN }
-                          },
-                          required: ['label', 'isCompleted']
-                        }
+                    }
+                  },
+                  required: ['title', 'problems']
+                }
+              },
+              notes: { type: Type.STRING }
+            }
+          },
+          combinatorics: {
+            type: Type.OBJECT,
+            properties: {
+              previews: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    problems: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          label: { type: Type.STRING },
+                          isCompleted: { type: Type.BOOLEAN }
+                        },
+                        required: ['label', 'isCompleted']
                       }
-                    },
-                    required: ['title', 'problems']
-                  }
-                },
-                reviews: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      title: { type: Type.STRING },
-                      problems: {
-                        type: Type.ARRAY,
-                        items: {
-                          type: Type.OBJECT,
-                          properties: {
-                            label: { type: Type.STRING },
-                            isCompleted: { type: Type.BOOLEAN }
-                          },
-                          required: ['label', 'isCompleted']
-                        }
+                    }
+                  },
+                  required: ['title', 'problems']
+                }
+              },
+              reviews: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    problems: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          label: { type: Type.STRING },
+                          isCompleted: { type: Type.BOOLEAN }
+                        },
+                        required: ['label', 'isCompleted']
                       }
-                    },
-                    required: ['title', 'problems']
-                  }
-                },
-                wtScopes: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      title: { type: Type.STRING },
-                      problems: {
-                        type: Type.ARRAY,
-                        items: {
-                          type: Type.OBJECT,
-                          properties: {
-                            label: { type: Type.STRING },
-                            isCompleted: { type: Type.BOOLEAN }
-                          },
-                          required: ['label', 'isCompleted']
-                        }
+                    }
+                  },
+                  required: ['title', 'problems']
+                }
+              },
+              wtScopes: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    problems: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          label: { type: Type.STRING },
+                          isCompleted: { type: Type.BOOLEAN }
+                        },
+                        required: ['label', 'isCompleted']
                       }
-                    },
-                    required: ['title', 'problems']
-                  }
-                },
-                notes: { type: Type.STRING }
-              }
-            },
-            number_theory: {
-              type: Type.OBJECT,
-              properties: {
-                previews: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      title: { type: Type.STRING },
-                      problems: {
-                        type: Type.ARRAY,
-                        items: {
-                          type: Type.OBJECT,
-                          properties: {
-                            label: { type: Type.STRING },
-                            isCompleted: { type: Type.BOOLEAN }
-                          },
-                          required: ['label', 'isCompleted']
-                        }
+                    }
+                  },
+                  required: ['title', 'problems']
+                }
+              },
+              notes: { type: Type.STRING }
+            }
+          },
+          number_theory: {
+            type: Type.OBJECT,
+            properties: {
+              previews: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    problems: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          label: { type: Type.STRING },
+                          isCompleted: { type: Type.BOOLEAN }
+                        },
+                        required: ['label', 'isCompleted']
                       }
-                    },
-                    required: ['title', 'problems']
-                  }
-                },
-                reviews: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      title: { type: Type.STRING },
-                      problems: {
-                        type: Type.ARRAY,
-                        items: {
-                          type: Type.OBJECT,
-                          properties: {
-                            label: { type: Type.STRING },
-                            isCompleted: { type: Type.BOOLEAN }
-                          },
-                          required: ['label', 'isCompleted']
-                        }
+                    }
+                  },
+                  required: ['title', 'problems']
+                }
+              },
+              reviews: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    problems: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          label: { type: Type.STRING },
+                          isCompleted: { type: Type.BOOLEAN }
+                        },
+                        required: ['label', 'isCompleted']
                       }
-                    },
-                    required: ['title', 'problems']
-                  }
-                },
-                wtScopes: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      title: { type: Type.STRING },
-                      problems: {
-                        type: Type.ARRAY,
-                        items: {
-                          type: Type.OBJECT,
-                          properties: {
-                            label: { type: Type.STRING },
-                            isCompleted: { type: Type.BOOLEAN }
-                          },
-                          required: ['label', 'isCompleted']
-                        }
+                    }
+                  },
+                  required: ['title', 'problems']
+                }
+              },
+              wtScopes: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    problems: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          label: { type: Type.STRING },
+                          isCompleted: { type: Type.BOOLEAN }
+                        },
+                        required: ['label', 'isCompleted']
                       }
-                    },
-                    required: ['title', 'problems']
-                  }
-                },
-                notes: { type: Type.STRING }
-              }
+                    }
+                  },
+                  required: ['title', 'problems']
+                }
+              },
+              notes: { type: Type.STRING }
             }
           }
         }
       }
-    });
+    };
+
+    let response: any = null;
+    const modelsToTry = [
+      'gemini-2.5-flash',
+      'gemini-2.0-flash',
+      'gemini-1.5-flash',
+      'gemini-2.5-pro'
+    ];
+    let lastError: any = null;
+
+    for (const modelName of modelsToTry) {
+      try {
+        console.log(`Attempting Gemini parsing with model: ${modelName}`);
+        response = await ai.models.generateContent({
+          model: modelName,
+          contents: parts,
+          config: config
+        });
+        if (response && response.text) {
+          console.log(`Successfully generated content using model: ${modelName}`);
+          break; // Succeeded!
+        }
+      } catch (err: any) {
+        console.warn(`Model ${modelName} failed/unavailable:`, err.message || err);
+        lastError = err;
+      }
+    }
+
+    if (!response) {
+      throw lastError || new Error('All Gemini model attempts failed.');
+    }
 
     const parsedJson = JSON.parse(response.text || '{}');
     res.json(parsedJson);
   } catch (error: any) {
     console.error('Gemini parsing failed:', error);
-    res.status(500).json({ error: error.message || 'Failed to parse content' });
+    
+    let userFriendlyError = '서버에서 AI 분석 중 오류가 발생했습니다.';
+    const errorStr = typeof error === 'object' ? JSON.stringify(error) : String(error);
+    const errMsg = error.message || '';
+    
+    if (
+      errorStr.includes('429') || 
+      errorStr.includes('RESOURCE_EXHAUSTED') || 
+      errMsg.includes('quota') || 
+      errMsg.includes('429') || 
+      errMsg.includes('RESOURCE_EXHAUSTED')
+    ) {
+      userFriendlyError = '인공지능(Gemini) 모델의 무료 호출 한도가 순간적으로 초과되었습니다. 10~30초 후에 다시 [분석] 버튼을 누르면 성공합니다.';
+    } else if (
+      errorStr.includes('503') || 
+      errorStr.includes('UNAVAILABLE') || 
+      errMsg.includes('503') || 
+      errMsg.includes('UNAVAILABLE') || 
+      errorStr.includes('high demand') ||
+      errMsg.includes('high demand')
+    ) {
+      userFriendlyError = '현재 인공지능 서버 요청이 너무 많아 일시적으로 사용이 어렵습니다. 10초 후에 다시 시도해 주세요.';
+    } else if (errMsg) {
+      userFriendlyError = `AI 분석 오류: ${errMsg}`;
+    }
+    
+    res.status(500).json({ error: userFriendlyError });
   }
 });
 
