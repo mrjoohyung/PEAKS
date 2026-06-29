@@ -165,8 +165,85 @@ export default function App() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (parsed.subjects && parsed.rawPasteText) {
-          return parsed;
+        if (parsed && typeof parsed === 'object') {
+          // Initialize subjects if missing or not an object
+          if (!parsed.subjects || typeof parsed.subjects !== 'object') {
+            parsed.subjects = {};
+          }
+          
+          // Guarantee all subjects exist and have arrays
+          const subjects = parsed.subjects;
+          (Object.keys(SUBJECTS_CONFIG) as SubjectType[]).forEach((subId) => {
+            if (!subjects[subId] || typeof subjects[subId] !== 'object') {
+              subjects[subId] = {
+                subjectId: subId,
+                previews: [],
+                reviews: [],
+                wtScopes: [],
+                notes: ''
+              };
+            } else {
+              const sub = subjects[subId];
+              sub.subjectId = subId;
+              if (!Array.isArray(sub.previews)) sub.previews = [];
+              if (!Array.isArray(sub.reviews)) sub.reviews = [];
+              if (!Array.isArray(sub.wtScopes)) sub.wtScopes = [];
+              sub.notes = typeof sub.notes === 'string' ? sub.notes : '';
+              
+              // Validate each preview section
+              sub.previews = sub.previews.map((sec: any, idx: number) => {
+                if (!sec || typeof sec !== 'object') return null;
+                return {
+                  id: sec.id || `healed_geo_p_${idx}_${Date.now()}`,
+                  title: sec.title || '예습 과제',
+                  rawText: sec.rawText || '',
+                  problems: Array.isArray(sec.problems) 
+                    ? sec.problems.map((p: any, pIdx: number) => ({
+                        id: p?.id || `healed_p_${idx}_${pIdx}_${Date.now()}`,
+                        label: p?.label || '문제',
+                        isCompleted: !!p?.isCompleted
+                      }))
+                    : []
+                };
+              }).filter(Boolean);
+
+              // Validate each review section
+              sub.reviews = sub.reviews.map((sec: any, idx: number) => {
+                if (!sec || typeof sec !== 'object') return null;
+                return {
+                  id: sec.id || `healed_geo_r_${idx}_${Date.now()}`,
+                  title: sec.title || '복습 과제',
+                  rawText: sec.rawText || '',
+                  problems: Array.isArray(sec.problems) 
+                    ? sec.problems.map((p: any, pIdx: number) => ({
+                        id: p?.id || `healed_r_${idx}_${pIdx}_${Date.now()}`,
+                        label: p?.label || '문제',
+                        isCompleted: !!p?.isCompleted
+                      }))
+                    : []
+                };
+              }).filter(Boolean);
+
+              // Validate each wtScope section
+              sub.wtScopes = sub.wtScopes.map((sec: any, idx: number) => {
+                if (!sec || typeof sec !== 'object') return null;
+                return {
+                  id: sec.id || `healed_geo_w_${idx}_${Date.now()}`,
+                  title: sec.title || 'WT 범위',
+                  rawText: sec.rawText || '',
+                  problems: Array.isArray(sec.problems) 
+                    ? sec.problems.map((p: any, pIdx: number) => ({
+                        id: p?.id || `healed_w_${idx}_${pIdx}_${Date.now()}`,
+                        label: p?.label || '문제',
+                        isCompleted: !!p?.isCompleted
+                      }))
+                    : []
+                };
+              }).filter(Boolean);
+            }
+          });
+
+          return parsed as AppState;
         }
       } catch (e) {
         console.error('Failed to parse saved state, using initial', e);
@@ -664,18 +741,28 @@ Respond ONLY with valid JSON conforming to the requested schema. Ensure to parse
       const newSubjectsState = { ...state.subjects };
 
       // Helper to map and assign unique ids to parsed items
-      const mapSections = (sections: any[] | undefined, prefix: string): AssignmentSection[] => {
-        if (!sections) return [];
-        return sections.map((sec, idx) => ({
-          id: `${prefix}_sec_${idx}_${Date.now()}`,
-          title: sec.title || '숙제 항목',
-          rawText: sec.rawText || '',
-          problems: (sec.problems || []).map((p: any, pIdx: number) => ({
-            id: `${prefix}_prob_${idx}_${pIdx}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-            label: p.label,
-            isCompleted: !!p.isCompleted,
-          })),
-        }));
+      const mapSections = (sections: any, prefix: string): AssignmentSection[] => {
+        if (!sections || !Array.isArray(sections)) return [];
+        return sections.map((sec: any, idx: number) => {
+          if (!sec || typeof sec !== 'object') return null;
+          const problems = Array.isArray(sec.problems)
+            ? sec.problems.map((p: any, pIdx: number) => {
+                if (!p) return null;
+                return {
+                  id: `${prefix}_prob_${idx}_${pIdx}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+                  label: p.label || '문제',
+                  isCompleted: !!p.isCompleted,
+                };
+              }).filter(Boolean)
+            : [];
+
+          return {
+            id: `${prefix}_sec_${idx}_${Date.now()}`,
+            title: sec.title || '숙제 항목',
+            rawText: sec.rawText || '',
+            problems: problems as ProblemItem[],
+          };
+        }).filter(Boolean) as AssignmentSection[];
       };
 
       (Object.keys(SUBJECTS_CONFIG) as SubjectType[]).forEach((subKey) => {
@@ -684,25 +771,27 @@ Respond ONLY with valid JSON conforming to the requested schema. Ensure to parse
 
         // 1. Previews (예습): Unchecked previews are done during class, so they are replaced by newly parsed previews.
         const parsedPreviews = mapSections(serverData.previews, `${subKey}_p`);
-        const previews = (serverData.previews && serverData.previews.length > 0)
+        const previews = (serverData.previews && Array.isArray(serverData.previews) && serverData.previews.length > 0)
           ? parsedPreviews
           : (prevSubject?.previews || []);
 
         // 2. Reviews (복습): Unchecked reviews are overdue, so we must preserve only the unchecked ones at the very front and append new reviews.
         const prevReviews = prevSubject?.reviews || [];
-        const overdueReviews = prevReviews
-          .map((sec) => ({
-            ...sec,
-            problems: sec.problems.filter((p) => !p.isCompleted),
-          }))
-          .filter((sec) => sec.problems.length > 0);
+        const overdueReviews = Array.isArray(prevReviews)
+          ? prevReviews
+              .map((sec) => ({
+                ...sec,
+                problems: Array.isArray(sec?.problems) ? sec.problems.filter((p) => p && !p.isCompleted) : [],
+              }))
+              .filter((sec) => sec.problems.length > 0)
+          : [];
 
         const newReviews = mapSections(serverData.reviews, `${subKey}_r`);
         const reviews = [...overdueReviews, ...newReviews];
 
         // 3. WT Scopes (WT 대비): Replace with new if parsed, else keep existing.
         const parsedWtScopes = mapSections(serverData.wtScopes, `${subKey}_wtscope`);
-        const wtScopes = (serverData.wtScopes && serverData.wtScopes.length > 0)
+        const wtScopes = (serverData.wtScopes && Array.isArray(serverData.wtScopes) && serverData.wtScopes.length > 0)
           ? parsedWtScopes
           : (prevSubject?.wtScopes || []);
 
